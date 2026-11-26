@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
 """Phase 5 interface test for strix_halo_smu. Sends read-class messages only.
 
 Every other case is refused by the module's gate before any hardware access;

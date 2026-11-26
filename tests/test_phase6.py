@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
 """Phase 6: first state-changing message, MP1 0x4C (Curve Optimizer, all cores).
 
 Sequence: baseline (CO untouched) -> CO_STEPS -> 0, each measured under the same

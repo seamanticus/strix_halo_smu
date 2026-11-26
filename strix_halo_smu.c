@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0
+// SPDX-License-Identifier: GPL-2.0 OR MIT
 /*
  * strix_halo_smu - SMU mailbox transport for AMD Strix Halo on the ASUS ROG
  * Flow Z13 GZ302EA.
@@ -869,4 +869,4 @@ module_init(shs_init);
 module_exit(shs_exit);
 
 MODULE_DESCRIPTION("SMU mailbox transport for AMD Strix Halo (ASUS GZ302EA)");
-MODULE_LICENSE("GPL");
+MODULE_LICENSE("Dual MIT/GPL");

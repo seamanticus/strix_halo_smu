@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
 """M2 window test for strix_halo_smu. Read-only: table reads and k10temp only.
 
 1. Reproduces the phase-6 false alarm: all-core load, then table reads at long

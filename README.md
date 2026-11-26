@@ -94,4 +94,4 @@ Run from this directory with the module loaded with default parameters:
 
 ## License
 
-GPL-2.0. The uapi header is GPL-2.0 WITH Linux-syscall-note.
+MIT (see `LICENSE`), except the kernel module source, `strix_halo_smu.c`, which is dual `GPL-2.0 OR MIT`. The module calls kernel functions exported to GPL-compatible modules only (`amd_smn_read/write`, `dmi_match`, `region_intersects`), and the kernel accepts MIT only as `Dual MIT/GPL`. It may still be used under MIT.

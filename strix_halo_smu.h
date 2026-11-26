@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
+/* SPDX-License-Identifier: MIT */
 /*
  * strix_halo_smu userspace interface, /dev/strix_halo_smu.
  *
