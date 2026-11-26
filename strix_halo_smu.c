@@ -57,6 +57,8 @@ static char shs_alib_path[] = "\\_SB.ALIB";
 #define SHS_PM_TCTL_OFF		0xb38
 /* Worst skew seen under a step load was 1.25 C; see plan section 4f. */
 #define SHS_TCTL_TOLERANCE_MC	3000
+/* Longest transfer-to-transfer window the M2 calibration covers (55 ms polling). */
+#define SHS_CANARY_WINDOW_NS	(2 * SHS_REFRESH_NS)
 
 static bool allow_unlisted;
 module_param(allow_unlisted, bool, 0400);
@@ -104,6 +106,7 @@ static struct {
 	struct mutex lock;		/* serializes refresh and the snapshot */
 	bool wedged;			/* a transaction was left half-done */
 	bool table_mismatch;		/* M2 failed: the table no longer matches the Tctl sensor */
+	bool canary_checked;		/* M2 has run at least once */
 	int snap_err;			/* outcome of the last refresh */
 	void *table;			/* SMU-owned page, written by RSMU 0x65 */
 	u8 *snap;			/* last complete copy served to readers */
@@ -471,6 +474,7 @@ static int shs_fetch(void)
 {
 	/* 0x65 is rejected with 0xFD on the first call after boot or a long idle. */
 	static const unsigned int retry_ms[] = { 10, 100 };
+	ktime_t prev = shs.snap_time;
 	unsigned int i;
 	u32 rsp = 0;
 	int err;
@@ -493,6 +497,12 @@ static int shs_fetch(void)
 
 	memcpy(shs.snap, shs.table, shs.size);
 	shs.snap_time = ktime_get();
+
+	/* Table values average since the previous transfer; M2 is calibrated on short windows. */
+	if (!prev || ktime_to_ns(ktime_sub(shs.snap_time, prev)) > SHS_CANARY_WINDOW_NS)
+		return 0;
+
+	shs.canary_checked = true;
 	return shs_check_tctl();
 }
 
@@ -821,8 +831,17 @@ static int __init shs_init(void)
 	shs.snap = kzalloc(size, GFP_KERNEL);
 	err = shs.snap ? 0 : -ENOMEM;
 	if (!err) {
+		/* The first transfer has no previous one to bound its window; the second does. */
 		mutex_lock(&shs.lock);
 		err = shs_refresh();
+		if (!err) {
+			msleep(SHS_REFRESH_MS);
+			err = shs_refresh();
+		}
+		if (!err && !shs.canary_checked) {
+			pr_err("tctl check could not run at load\n");
+			err = -EIO;
+		}
 		mutex_unlock(&shs.lock);
 	}
 	if (err)
