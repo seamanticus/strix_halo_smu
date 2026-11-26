@@ -73,6 +73,17 @@ ALIB drives the MP1 mailbox asynchronously, on EC events, AC changes and profile
 
 Other set and safeguard entries are catalogued from BIOS and tool evidence but have not been exercised on hardware.
 
+## Userspace
+
+`user/` holds `libshs` (`shs.h`, `libshs.c`) and the `shsctl` command line client. Build with `make -C user`.
+
+- The library is a thin layer: one call per transaction, the table snapshot, named fields of table 0x0064020C (they return NAN for any other version), and `shs_co_all()`, an encoder for the only set-class message verified on hardware. It holds no policy.
+- `shsctl info`: PMFW and interface version, table version and size.
+- `shsctl table [--raw]`: limits, Tctl and the per-core clock, voltage, power and temperature; `--raw` writes the binary table to stdout.
+- `shsctl msg mp1|rsmu ID [ARG...]`: a raw transaction. The module's gate decides what is allowed; exit code 3 means the SMU answered something other than OK.
+- `shsctl co-all STEPS`: CO all-core; 0 restores the default.
+- `shsctl stats`: the non-empty `send_stats` records.
+
 ## Tests
 
 Run from this directory with the module loaded with default parameters:
