@@ -118,6 +118,7 @@ enum shs_class {
 	SHS_SET,		/* firmware-owned limits and CO; needs a writable fd */
 	SHS_SAFEGUARD,		/* can weaken a protection; also needs allow_safeguard_writes */
 	SHS_TABLE,		/* reached only through the rate-limited refresh */
+	SHS_DENY,		/* never forwarded, whatever the gates */
 };
 
 struct shs_entry {
@@ -153,6 +154,8 @@ static const struct shs_entry shs_catalogue[] = {
 	{ SHS_MBOX_MP1, SHS_MP1_DGPU_SKIN_LIMIT,	SHS_SAFEGUARD,	true },
 	{ SHS_MBOX_MP1, SHS_MP1_STT_POWER_LIMIT,	SHS_SAFEGUARD,	true },
 	{ SHS_MBOX_MP1, SHS_MP1_CHTC_LIMIT,		SHS_SAFEGUARD,	false },
+	{ SHS_MBOX_MP1, SHS_MP1_GPU_BAR_LO,		SHS_DENY,	true },
+	{ SHS_MBOX_MP1, SHS_MP1_GPU_BAR_HI,		SHS_DENY,	true },
 	{ SHS_MBOX_RSMU, SHS_RSMU_GET_TABLE_VERSION,	SHS_READ,	true },
 	{ SHS_MBOX_RSMU, SHS_RSMU_GET_TABLE_BASE,	SHS_READ,	true },
 	{ SHS_MBOX_RSMU, SHS_RSMU_TRANSFER_TABLE,	SHS_TABLE,	true },
@@ -162,6 +165,16 @@ static const struct shs_entry shs_catalogue[] = {
 	{ SHS_MBOX_RSMU, SHS_RSMU_OC_CLOCK_PER_CORE,	SHS_SAFEGUARD,	false },
 	{ SHS_MBOX_RSMU, SHS_RSMU_OC_VOLTAGE,		SHS_SAFEGUARD,	false },
 	{ SHS_MBOX_RSMU, SHS_RSMU_GFX_CLOCK_FORCE,	SHS_SAFEGUARD,	false },
+	{ SHS_MBOX_RSMU, SHS_RSMU_CHTC_LIMIT,		SHS_SAFEGUARD,	false },
+	{ SHS_MBOX_RSMU, SHS_RSMU_VDD_TDC_LIMIT,		SHS_SAFEGUARD,	false },
+	{ SHS_MBOX_RSMU, SHS_RSMU_SOC_TDC_LIMIT,		SHS_SAFEGUARD,	false },
+	{ SHS_MBOX_RSMU, SHS_RSMU_VDD_EDC_LIMIT,		SHS_SAFEGUARD,	false },
+	{ SHS_MBOX_RSMU, SHS_RSMU_SOC_EDC_LIMIT,		SHS_SAFEGUARD,	false },
+	{ SHS_MBOX_RSMU, SHS_RSMU_PSI0_CURRENT,		SHS_SAFEGUARD,	false },
+	{ SHS_MBOX_RSMU, SHS_RSMU_PSI0_SOC_CURRENT,	SHS_SAFEGUARD,	false },
+	{ SHS_MBOX_RSMU, SHS_RSMU_PBO_SCALAR,		SHS_SAFEGUARD,	false },
+	{ SHS_MBOX_RSMU, SHS_RSMU_GFX_CLOCK,		SHS_SAFEGUARD,	false },
+	{ SHS_MBOX_RSMU, SHS_RSMU_DGPU_SKIN_LIMIT,	SHS_SAFEGUARD,	false },
 };
 
 static int shs_check_identity(void)
@@ -527,8 +540,39 @@ static ssize_t pm_table_read(struct file *f, struct kobject *kobj,
 
 static struct bin_attribute bin_attr_pm_table = __BIN_ATTR_RO(pm_table, 0);
 
+/*
+ * Send budget per mailbox, shared by every caller and every class: it bounds
+ * how long userspace can keep AM00 from the BIOS and how fast the log grows.
+ */
+static DEFINE_MUTEX(shs_send_lock);
+static struct shs_bucket {
+	unsigned int tokens;
+	ktime_t refilled;
+} shs_bucket[2];
+static struct shs_send_stat shs_stats[2 * 256];
+
+static ssize_t send_stats_read(struct file *f, struct kobject *kobj,
+			       const struct bin_attribute *attr, char *buf,
+			       loff_t off, size_t count)
+{
+	if (off >= sizeof(shs_stats))
+		return 0;
+	count = min_t(size_t, count, sizeof(shs_stats) - off);
+
+	mutex_lock(&shs_send_lock);
+	memcpy(buf, (u8 *)shs_stats + off, count);
+	mutex_unlock(&shs_send_lock);
+
+	return count;
+}
+
+/* Root-only: the records name senders' pids and their arguments. */
+static const struct bin_attribute bin_attr_send_stats =
+	__BIN_ATTR_ADMIN_RO(send_stats, sizeof(shs_stats));
+
 static const struct bin_attribute *const shs_bin_attrs[] = {
 	&bin_attr_pm_table,
+	&bin_attr_send_stats,
 	NULL,
 };
 
@@ -552,47 +596,75 @@ static const struct shs_entry *shs_lookup(u32 mailbox, u32 msg)
 	return NULL;
 }
 
-/* Decides whether a message may be sent; anything but read class taints. */
-static int shs_gate(struct file *file, const struct shs_msg *m)
+static bool shs_take_token(struct shs_bucket *b)
+{
+	const s64 step = (s64)SHS_SEND_INTERVAL_MS * NSEC_PER_MSEC;
+	ktime_t now = ktime_get();
+	s64 n;
+
+	lockdep_assert_held(&shs_send_lock);
+
+	if (!b->refilled) {
+		b->tokens = SHS_SEND_BURST;
+		b->refilled = now;
+	}
+
+	n = div64_s64(ktime_to_ns(ktime_sub(now, b->refilled)), step);
+	if (n >= SHS_SEND_BURST - b->tokens) {
+		b->tokens = SHS_SEND_BURST;
+		b->refilled = now;
+	} else if (n) {
+		b->tokens += n;
+		b->refilled = ktime_add_ns(b->refilled, n * step);
+	}
+
+	if (!b->tokens)
+		return false;
+	b->tokens--;
+	return true;
+}
+
+/*
+ * Decides whether a message may be sent. On success *what names the class of a
+ * state-changing message, or is NULL for read class.
+ */
+static int shs_gate(struct file *file, const struct shs_msg *m, const char **what)
 {
 	const struct shs_entry *e = shs_lookup(m->mailbox, m->msg);
-	const char *what;
 	int err;
 
+	*what = NULL;
 	if (e && e->cls == SHS_READ)
 		return 0;
 
 	if (!e) {
 		if (!allow_unlisted)
 			return -ENOMSG;
-		what = "unlisted";
-	} else if (e->cls == SHS_TABLE) {
+		*what = "unlisted";
+	} else if (e->cls == SHS_TABLE || e->cls == SHS_DENY) {
 		return -EPERM;
 	} else if (e->cls == SHS_SAFEGUARD) {
 		if (!allow_safeguard_writes)
 			return -EPERM;
-		what = e->verified ? "safeguard" : "unverified safeguard";
+		*what = e->verified ? "safeguard" : "unverified safeguard";
 	} else {
-		what = "set";
+		*what = "set";
 	}
 
 	if (!(file->f_mode & FMODE_WRITE))
 		return -EBADF;
 	err = security_locked_down(LOCKDOWN_MSR);
-	if (err)
-		return err;
 
-	pr_notice("%s message %s 0x%02x arg0 0x%x by %s (pid %d), tainting CPU_OUT_OF_SPEC\n",
-		  m->mailbox == SHS_MBOX_MP1 ? "mp1" : "rsmu", what, m->msg, m->args[0],
-		  current->comm, task_pid_nr(current));
-	add_taint(TAINT_CPU_OUT_OF_SPEC, LOCKDEP_STILL_OK);
-	return 0;
+	return err;
 }
 
 static long shs_ioctl_msg(struct file *file, struct shs_msg __user *um)
 {
 	const struct shs_mbox *mb;
+	struct shs_send_stat *st;
+	const char *what;
 	struct shs_msg m;
+	bool admitted;
 	int err;
 
 	if (copy_from_user(&m, um, sizeof(m)))
@@ -607,9 +679,36 @@ static long shs_ioctl_msg(struct file *file, struct shs_msg __user *um)
 	if (m.msg > 0xff)
 		return -EINVAL;
 
-	err = shs_gate(file, &m);
+	err = shs_gate(file, &m, &what);
 	if (err)
 		return err;
+
+	st = &shs_stats[m.mailbox * 256 + m.msg];
+	mutex_lock(&shs_send_lock);
+	admitted = shs_take_token(&shs_bucket[m.mailbox]);
+	if (admitted) {
+		st->admitted++;
+		memcpy(st->args, m.args, sizeof(st->args));
+		st->pid = task_tgid_nr(current);
+		st->time_ns = ktime_get_ns();
+	} else {
+		st->refused++;
+	}
+	mutex_unlock(&shs_send_lock);
+
+	if (!admitted) {
+		pr_notice_ratelimited("%s: send budget exhausted, refusing 0x%02x from %s (pid %d)\n",
+				      mb->name, m.msg, current->comm, task_tgid_nr(current));
+		return -EAGAIN;
+	}
+
+	/* Every state-changing send is logged; the budget, not a log ratelimit, bounds volume. */
+	if (what) {
+		pr_notice("%s: %s message 0x%02x args %08x %08x %08x %08x %08x %08x by %s (pid %d), tainting CPU_OUT_OF_SPEC\n",
+			  mb->name, what, m.msg, m.args[0], m.args[1], m.args[2], m.args[3],
+			  m.args[4], m.args[5], current->comm, task_tgid_nr(current));
+		add_taint(TAINT_CPU_OUT_OF_SPEC, LOCKDEP_STILL_OK);
+	}
 
 	err = shs_send(mb, m.msg, m.args, &m.rsp);
 	if (err)
@@ -669,8 +768,17 @@ static long shs_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	}
 }
 
+static int shs_open(struct inode *inode, struct file *file)
+{
+	if (!capable(CAP_SYS_RAWIO))
+		return -EPERM;
+
+	return 0;
+}
+
 static const struct file_operations shs_fops = {
 	.owner = THIS_MODULE,
+	.open = shs_open,
 	.unlocked_ioctl = shs_ioctl,
 	.compat_ioctl = compat_ptr_ioctl,
 };

@@ -53,24 +53,42 @@
 #define SHS_MP1_STT_POWER_LIMIT		0x4a
 #define SHS_MP1_CHTC_LIMIT		0x63	/* single source, unverified */
 
+/* MP1, never forwarded: the BIOS passes a GPU MMIO BAR address through these. */
+#define SHS_MP1_GPU_BAR_LO		0x25
+#define SHS_MP1_GPU_BAR_HI		0x26
+
 /* RSMU, read class */
 #define SHS_RSMU_GET_TABLE_VERSION	0x06	/* args[0] version, args[1] size */
 #define SHS_RSMU_GET_TABLE_BASE		0x66
 /* Table transfer: only through SHS_IOC_TABLE or pm_table, which rate-limit it. */
 #define SHS_RSMU_TRANSFER_TABLE		0x65
 
-/* RSMU, safeguard class, all single source and unverified */
+/* RSMU, safeguard class, unverified on this SoC; names from UXTU's FT6 table */
 #define SHS_RSMU_OC_ENABLE		0x17
 #define SHS_RSMU_OC_DISABLE		0x18
 #define SHS_RSMU_OC_CLOCK_ALL		0x19
 #define SHS_RSMU_OC_CLOCK_PER_CORE	0x1a
 #define SHS_RSMU_OC_VOLTAGE		0x1b
 #define SHS_RSMU_GFX_CLOCK_FORCE	0x1c
+#define SHS_RSMU_CHTC_LIMIT		0x37
+#define SHS_RSMU_VDD_TDC_LIMIT		0x38
+#define SHS_RSMU_SOC_TDC_LIMIT		0x39
+#define SHS_RSMU_VDD_EDC_LIMIT		0x3a
+#define SHS_RSMU_SOC_EDC_LIMIT		0x3b
+#define SHS_RSMU_PSI0_CURRENT		0x3c
+#define SHS_RSMU_PSI0_SOC_CURRENT	0x3d
+#define SHS_RSMU_PBO_SCALAR		0x3e
+#define SHS_RSMU_GFX_CLOCK		0x89	/* also RyzenAdj set_gfx_clk */
+#define SHS_RSMU_DGPU_SKIN_LIMIT	0x92
 
 /*
  * One complete mailbox transaction. Returns 0 when the SMU answered; rsp then
- * holds its raw response code and args its results.
+ * holds its raw response code and args its results. Each mailbox admits a
+ * burst of SHS_SEND_BURST messages, refilled at one per SHS_SEND_INTERVAL_MS;
+ * beyond that the call fails with EAGAIN before reaching the SMU.
  */
+#define SHS_SEND_BURST		16
+#define SHS_SEND_INTERVAL_MS	1000
 struct shs_msg {
 	__u32 mailbox;			/* SHS_MBOX_* */
 	__u32 msg;
@@ -84,6 +102,19 @@ struct shs_table {
 	__u32 size;			/* in: buffer size, out: table size */
 	__u32 version;			/* out: table version, RSMU 0x06 */
 	__u64 time_ns;			/* out: CLOCK_MONOTONIC at refresh completion */
+};
+
+/*
+ * /sys/class/misc/strix_halo_smu/send_stats: one record per (mailbox, msg),
+ * at index mailbox * 256 + msg, for messages arriving through SHS_IOC_MSG.
+ */
+struct shs_send_stat {
+	__u32 admitted;			/* passed every check and went to the SMU */
+	__u32 refused;			/* refused by the send budget */
+	__u32 args[SHS_NUM_ARGS];	/* arguments of the last admitted send */
+	__s32 pid;			/* thread group of the last admitted sender */
+	__u32 pad;
+	__u64 time_ns;			/* CLOCK_MONOTONIC of the last admitted send */
 };
 
 #define SHS_IOC_MAGIC		0xb9
