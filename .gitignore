@@ -11,4 +11,5 @@ user/libshs.so
 user/shsctl
 /*.txt
 /*.csv
+/*.bin
 __pycache__/
