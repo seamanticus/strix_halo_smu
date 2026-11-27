@@ -49,17 +49,30 @@ int shs_interface_version(int fd, uint32_t *version);
 int shs_read_table(int fd, struct shs_snapshot *s);
 
 float shs_table_f32(const struct shs_snapshot *s, size_t off);
+/* Skin-temperature (STT) power cap: falls as the skin estimate nears the skin limit. */
+float shs_stt_cap_w(const struct shs_snapshot *s);
 /* Fast and slow limits: MP1 0x15/0x16 land here and are enforced (tests/test_power_limits.py). */
 float shs_fast_limit_w(const struct shs_snapshot *s);
 float shs_slow_limit_w(const struct shs_snapshot *s);
-/* Package power as the fast limit sees it; capped by both limits under load. */
+/* Package power; under load it settles at the lowest of the STT cap, fast and slow limits. */
 float shs_fast_power_w(const struct shs_snapshot *s);
 float shs_skin_limit_c(const struct shs_snapshot *s);
+/* The STT controller's skin temperature estimate, compared against the skin limit. */
+float shs_skin_temp_c(const struct shs_snapshot *s);
 float shs_tctl_c(const struct shs_snapshot *s);
 float shs_core_power_w(const struct shs_snapshot *s, unsigned int core);
 float shs_core_volt_mv(const struct shs_snapshot *s, unsigned int core);
 float shs_core_temp_c(const struct shs_snapshot *s, unsigned int core);
 float shs_core_clk_mhz(const struct shs_snapshot *s, unsigned int core);
+
+/* Fast (MP1 0x15) and slow (MP1 0x16) package power limits, in mW. */
+int shs_set_fast_limit(int fd, uint32_t mw, uint32_t *rsp);
+int shs_set_slow_limit(int fd, uint32_t mw, uint32_t *rsp);
+
+#define SHS_CO_ALL_MIN		(-(1 << 19))
+#define SHS_CO_ALL_MAX		((1 << 19) - 1)
+#define SHS_CO_CORE_MIN		INT16_MIN
+#define SHS_CO_CORE_MAX		INT16_MAX
 
 /* Curve Optimizer, all cores (MP1 0x4C): 20-bit two's complement steps; 0 is the default. */
 uint32_t shs_co_encode(int steps);

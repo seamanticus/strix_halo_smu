@@ -8,19 +8,18 @@
 
 #include "shs.h"
 
-/* Offsets in table 0x0064020C; checked against BIOS values and k10temp, see research/. */
+/* Offsets in table 0x0064020C; checked against BIOS values and k10temp, see docs/05-pm-table.md. */
+#define OFF_STT_CAP		0x000
 #define OFF_FAST_LIMIT		0x008
 #define OFF_FAST_POWER		0x00c
 #define OFF_SLOW_LIMIT		0x010
 #define OFF_SKIN_LIMIT		0x068
+#define OFF_SKIN_TEMP		0x06c
 #define OFF_TCTL		0xb38
 #define OFF_CORE_POWER		0xb90
 #define OFF_CORE_VOLT		0xbd0
 #define OFF_CORE_TEMP		0xc10
 #define OFF_CORE_CLK		0xc50
-
-#define CO_MIN			(-(1 << 19))
-#define CO_MAX			((1 << 19) - 1)
 
 int shs_open(int writable)
 {
@@ -110,6 +109,11 @@ static float core_field(const struct shs_snapshot *s, size_t base, unsigned int 
 	return core < SHS_TABLE_CORES ? field(s, base + 4 * core) : NAN;
 }
 
+float shs_stt_cap_w(const struct shs_snapshot *s)
+{
+	return field(s, OFF_STT_CAP);
+}
+
 float shs_fast_limit_w(const struct shs_snapshot *s)
 {
 	return field(s, OFF_FAST_LIMIT);
@@ -128,6 +132,11 @@ float shs_fast_power_w(const struct shs_snapshot *s)
 float shs_skin_limit_c(const struct shs_snapshot *s)
 {
 	return field(s, OFF_SKIN_LIMIT);
+}
+
+float shs_skin_temp_c(const struct shs_snapshot *s)
+{
+	return field(s, OFF_SKIN_TEMP);
 }
 
 float shs_tctl_c(const struct shs_snapshot *s)
@@ -156,6 +165,23 @@ float shs_core_clk_mhz(const struct shs_snapshot *s, unsigned int core)
 	return core_field(s, OFF_CORE_CLK, core) * 1000.0f;
 }
 
+static int send1(int fd, unsigned int msg, uint32_t arg, uint32_t *rsp)
+{
+	uint32_t args[SHS_NUM_ARGS] = { arg };
+
+	return shs_msg(fd, SHS_MBOX_MP1, msg, args, rsp);
+}
+
+int shs_set_fast_limit(int fd, uint32_t mw, uint32_t *rsp)
+{
+	return send1(fd, SHS_MP1_FAST_LIMIT, mw, rsp);
+}
+
+int shs_set_slow_limit(int fd, uint32_t mw, uint32_t *rsp)
+{
+	return send1(fd, SHS_MP1_SLOW_LIMIT, mw, rsp);
+}
+
 uint32_t shs_co_encode(int steps)
 {
 	return (uint32_t)steps & 0xfffff;
@@ -163,13 +189,10 @@ uint32_t shs_co_encode(int steps)
 
 int shs_co_all(int fd, int steps, uint32_t *rsp)
 {
-	uint32_t args[SHS_NUM_ARGS] = { 0 };
-
-	if (steps < CO_MIN || steps > CO_MAX)
+	if (steps < SHS_CO_ALL_MIN || steps > SHS_CO_ALL_MAX)
 		return -ERANGE;
 
-	args[0] = shs_co_encode(steps);
-	return shs_msg(fd, SHS_MBOX_MP1, SHS_MP1_CO_ALL_CORE, args, rsp);
+	return send1(fd, SHS_MP1_CO_ALL_CORE, shs_co_encode(steps), rsp);
 }
 
 /* The SMU refuses a core index above 7 in bits 23-20 (0xFF); the CCD goes in bits 31-28. */
@@ -180,13 +203,10 @@ uint32_t shs_co_core_encode(unsigned int core, int steps)
 
 int shs_co_core(int fd, unsigned int core, int steps, uint32_t *rsp)
 {
-	uint32_t args[SHS_NUM_ARGS] = { 0 };
-
 	if (core >= SHS_TABLE_CORES)
 		return -EINVAL;
-	if (steps < INT16_MIN || steps > INT16_MAX)
+	if (steps < SHS_CO_CORE_MIN || steps > SHS_CO_CORE_MAX)
 		return -ERANGE;
 
-	args[0] = shs_co_core_encode(core, steps);
-	return shs_msg(fd, SHS_MBOX_MP1, SHS_MP1_CO_PER_CORE, args, rsp);
+	return send1(fd, SHS_MP1_CO_PER_CORE, shs_co_core_encode(core, steps), rsp);
 }
