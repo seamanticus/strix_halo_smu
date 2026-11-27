@@ -1,0 +1,82 @@
+name: build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    strategy:
+      fail-fast: false
+      matrix:
+        kernel: [linux, linux-zen, linux-lts]
+    steps:
+      - name: Install toolchain and ${{ matrix.kernel }} headers
+        run: pacman -Syu --noconfirm --needed base-devel git python dkms ${{ matrix.kernel }}-headers
+
+      - uses: actions/checkout@v4
+
+      # The container's uname -r is the runner's kernel; take the version from the installed headers.
+      - name: Find kernel version
+        id: kernel
+        run: |
+          for d in /usr/lib/modules/*/; do
+            [ "$(cat "$d/pkgbase" 2>/dev/null)" = "${{ matrix.kernel }}" ] && kver=$(basename "$d")
+          done
+          [ -n "$kver" ] || { echo "no headers for ${{ matrix.kernel }}"; exit 1; }
+          echo "kver=$kver" >> "$GITHUB_OUTPUT"
+          # <asm/amd/node.h> and kbuild MO= need 6.15.
+          if [ "$(printf '%s\n6.15\n' "${kver%%-*}" | sort -V | head -1)" = 6.15 ]; then
+            echo "supported=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::${{ matrix.kernel }} $kver is older than 6.15, skipped"
+          fi
+
+      - name: Build module and tools, warnings as errors
+        if: steps.kernel.outputs.supported
+        run: make KVER=${{ steps.kernel.outputs.kver }} W=1 KCFLAGS=-Werror CFLAGS="-O2 -Werror"
+
+      - name: Tree stays clean
+        if: steps.kernel.outputs.supported
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          out=$(git status --porcelain --ignored | grep -v '^!! build/$' || true)
+          [ -z "$out" ] || { echo "$out"; exit 1; }
+
+      - name: Test scripts compile
+        run: python3 -m py_compile tests/*.py
+
+      - name: make install
+        if: steps.kernel.outputs.supported
+        run: make install FORCE=1 KVER=${{ steps.kernel.outputs.kver }}
+
+      - name: Installed files present
+        if: steps.kernel.outputs.supported
+        run: |
+          kver=${{ steps.kernel.outputs.kver }}
+          v=$(sed -n 's/^PACKAGE_VERSION="\(.*\)"/\1/p' dkms.conf)
+          dkms status -m strix_halo_smu -v "$v" -k "$kver" | grep -q installed
+          find /usr/lib/modules/"$kver" -name 'strix_halo_smu.ko*' | grep -q .
+          test -x /usr/local/bin/shsctl
+          test -e /usr/local/lib/libshs.so.0 && test -L /usr/local/lib/libshs.so
+          test -e /usr/local/include/shs.h && test -e /usr/local/include/strix_halo_smu.h
+          test -e /etc/modules-load.d/strix_halo_smu.conf
+          /usr/local/bin/shsctl help >/dev/null
+
+      - name: make uninstall leaves nothing behind
+        if: steps.kernel.outputs.supported
+        run: |
+          kver=${{ steps.kernel.outputs.kver }}
+          make uninstall
+          # set -e ignores commands negated with !, so failures are explicit.
+          fail() { echo "left behind: $1"; exit 1; }
+          [ -z "$(dkms status -m strix_halo_smu)" ] || fail "dkms entry"
+          [ -z "$(ls -d /usr/src/strix_halo_smu-* 2>/dev/null)" ] || fail /usr/src/strix_halo_smu-*
+          [ -z "$(find /usr/lib/modules/"$kver" -name 'strix_halo_smu.ko*')" ] || fail "installed .ko"
+          for f in /usr/local/bin/shsctl /usr/local/lib/libshs.so.0 /usr/local/lib/libshs.so \
+                   /usr/local/include/shs.h /usr/local/include/strix_halo_smu.h \
+                   /etc/modules-load.d/strix_halo_smu.conf; do
+            if [ -e "$f" ] || [ -L "$f" ]; then fail "$f"; fi
+          done
