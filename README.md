@@ -70,6 +70,7 @@ ALIB drives the MP1 mailbox asynchronously, on EC events, AC changes and profile
 | MP1 0x01 / 0x02 / 0x03 | test (arg + 1) / PMFW version / interface version | phase 2 |
 | RSMU 0x06 / 0x66 / 0x65 | table version+size / table base (lo, hi) / transfer (arg 3) | phase 3 |
 | MP1 0x4C CO all-core | 20-bit two's complement steps (-5 = 0xFFFFB); 0 restores the default | phase 6: -5 gave -6.8 mV at +32 MHz on one core; 0 returned to baseline within 0.5 mV |
+| MP1 0x4B CO per-core | `core << 20 \| steps & 0xFFFF`; cores 0-7 only so far (8-15 encoding unsettled) | core 2 at -10: -11.7 mV at +68 MHz, neighbour core 3 unchanged (-1.0 mV, as in the no-send control); per-core 0 restored it exactly |
 | MP1 0x15 fast limit | mW; lands in table 0x08 | 45000 capped package power (0x0C) at 45.0 W from the first second of load, clock 3532 -> 2702 MHz |
 | MP1 0x16 slow limit | mW; lands in table 0x10 | 30000 sent mid-load cut power 52 -> 30 W within seconds, clock 3161 -> 2175 MHz |
 | MP1 0x14 STAPM limit | mW (BIOS `STPV` encoding) | accepted (0x01) but **no measurable effect**: 20000 left power at the slow limit for 300 s in balanced and low-power, with and without power-profiles-daemon, and with amd_pmf never loaded. Not verified |
