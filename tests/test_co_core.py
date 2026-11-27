@@ -11,7 +11,7 @@ For cores 0-7 both encodings give the same word; they differ for 8-15. Each
 experiment: baseline -> CO STEPS on CORE -> 0 on CORE, every state measured as a
 1-core load on CORE and then on REF (same CCD), each starting from the same idle
 Tctl. On any exit the target is set to 0 per core and all cores to 0 (0x4C).
-Run on AC, at idle: sudo python3 tests/test_co_per_core.py MODE [CORE] > OUT.txt
+Run on AC, at idle: sudo python3 tests/test_co_core.py MODE [CORE] > OUT.txt
 """
 import ctypes
 import fcntl

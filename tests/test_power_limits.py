@@ -166,7 +166,7 @@ class Run:
 
 
 def verdict(run, name, low_w, judged, load_t0, send_t, end):
-    # 0x0C tracks package power within ~1 s (M2); 0x14 and 0x04 are slow averages, reported only.
+    # 0x0C tracks package power within ~1 s; 0x14 and 0x04 are slow averages, reported only.
     if name == "fast":
         win = run.window(load_t0 + 1, load_t0 + 7)
         power = max(r[2 + W_FAST_VAL] for r in win)

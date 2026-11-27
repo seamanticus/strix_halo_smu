@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
-"""Phase 6: first state-changing message, MP1 0x4C (Curve Optimizer, all cores).
+"""Curve Optimizer, all cores (MP1 0x4C): effect of CO_STEPS and its reset.
 
 Sequence: baseline (CO untouched) -> CO_STEPS -> 0, each measured under the same
 single-core and all-core load, every load starting from the same idle Tctl.
 CO is set back to 0 on any exit path. --control runs the same three states with
 no sends, on a read-only fd, to measure drift.
-Run on AC: sudo python3 tests/test_phase6.py [--control] > phase6_test.txt
+Run on AC: sudo python3 tests/test_co_all.py [--control] > co_all.txt
 """
 import ctypes
 import fcntl
@@ -23,7 +23,7 @@ MP1 = 0
 MSG_CO_ALL = 0x4C
 CO_STEPS = -5
 TCTL_ABORT_C = 90.0
-# Idle preconditions; run 2 (background benchmark) read 71 C idle and 1.94 GHz 1-core.
+# Idle preconditions; a background benchmark once read 71 C idle and 1.94 GHz 1-core.
 IDLE_TCTL_MAX_C = 45.0
 BOOST_MIN_MHZ = 4500
 

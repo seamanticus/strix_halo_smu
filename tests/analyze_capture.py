@@ -7,7 +7,7 @@
    capture, with lag search: the top candidates are what 0x00 follows.
 3. The values 0x00 settles at, compared with the BIOS STT power limits
    (DSDT AL2E per profile: 25, 35, 45, 60 W).
-Run: python3 tests/analyze_cap.py capture-PROFILE.bin
+Run: python3 tests/analyze_capture.py capture-PROFILE.bin
 """
 import math
 import struct

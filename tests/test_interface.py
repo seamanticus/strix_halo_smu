@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
-"""Phase 5 interface test for strix_halo_smu. Sends read-class messages only.
+"""Interface and gate test for strix_halo_smu. Sends read-class messages only.
 
 Every other case is refused by the module's gate before any hardware access;
 the script aborts if either gate parameter is open, so that stays true.
-Run: sudo python3 tests/test_phase5.py > phase5_test.txt
+Run: sudo python3 tests/test_interface.py > interface.txt
 """
 import ctypes
 import errno

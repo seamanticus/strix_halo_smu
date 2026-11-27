@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
-"""M2 window test for strix_halo_smu. Read-only: table reads and k10temp only.
+"""PM table averaging window and Tctl canary. Read-only: table reads and k10temp only.
 
-1. Reproduces the phase-6 false alarm: all-core load, then table reads at long
-   gaps while cooling. The table must stay served (no EIO).
+1. After an all-core load, reads the table at long gaps while cooling; the
+   canary must not trip (the table stays served, no EIO).
 2. Tests the averaging hypothesis: for each gap, compares the table's Tctl with
    k10temp at read time and with the k10temp mean over the window since the
    previous read (k10temp sampled every ~5 ms in between).
-Run: sudo python3 tests/test_m2_window.py > m2_window_test.txt
+Run: sudo python3 tests/test_table_window.py > table_window.txt
 """
 import ctypes
 import glob
