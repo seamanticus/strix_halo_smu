@@ -148,7 +148,7 @@ It counts messages sent through `SHS_IOC_MSG` only, not the module's own table r
 
 Field accessors return `NAN` if the table version is not `0x0064020C`, so a program never silently reads a different layout.
 
-Build: `make -C user` builds `libshs.so` and `shsctl`. Link with `-lshs -lm`.
+Build: `make` builds `build/user/libshs.so.0` and `build/user/shsctl`; `sudo make install` puts the library and headers in `/usr/local`. Link with `-lshs -lm`.
 
 ## 4.8 Writing a client: rules of thumb
 

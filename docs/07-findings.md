@@ -69,7 +69,7 @@ Measured effect of each limit (balanced, AC, all-core load):
 
 ### All cores (MP1 0x4C)
 
-`tests/test_phase6.py`, every load started at the same idle Tctl (44.3 C), compared with a no-send control run:
+`tests/test_co_all.py`, every load started at the same idle Tctl (44.3 C), compared with a no-send control run:
 
 | State | Single-core load | All-core load |
 |---|---|---|
@@ -83,7 +83,7 @@ A first run that seemed to show 0 not restoring the voltage was explained by ris
 
 ### One core (MP1 0x4B)
 
-`tests/test_co_per_core.py`, a target core and a neighbour in the same CCD as reference, each under the same pinned load:
+`tests/test_co_core.py`, a target core and a neighbour in the same CCD as reference, each under the same pinned load:
 
 | Core | Encoding | Result |
 |---|---|---|
@@ -102,7 +102,7 @@ CO is lost on reboot and on suspend/resume (z13ctl documentation; consistent wit
 
 ## 7.6 CPU-to-core mapping
 
-`tests/test_co_per_core.py map`: one logical CPU at a time spun under load, while recording which table core's power and clock rose. **Linux CPU `N` and CPU `N + 16` are the two threads of table core `N`**, for N = 0 to 15. Cores 0-7 are CCD 0, cores 8-15 CCD 1.
+`tests/test_co_core.py map`: one logical CPU at a time spun under load, while recording which table core's power and clock rose. **Linux CPU `N` and CPU `N + 16` are the two threads of table core `N`**, for N = 0 to 15. Cores 0-7 are CCD 0, cores 8-15 CCD 1.
 
 ## 7.7 BIOS power and thermal values per profile
 

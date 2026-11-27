@@ -359,7 +359,7 @@ Messages that are **not** in the catalogue, and why, are in [chapter 8](08-unkno
 - **Pros:** per-core tuning. Each core in a chip has different margin, so the best cores can go further.
 - **Cons:** lost on reboot and on suspend. Needs testing core by core.
 - **Status:** **verified for all 16 cores.** Core 2 at -10: -11.7 mV at +68 MHz, core 3 unchanged. Core 10 at -10: +108 MHz at -3.1 mV, core 11 unchanged. Back to 0 restored both. The "flat" encoding `core << 20` that G-Helper and UXTU use is **refused (`0xFF`) for cores 8-15**; it only works for 0-7 ([7.5](07-findings.md#75-curve-optimizer)).
-- **Sources:** HW (`tests/test_co_per_core.py`); ZS (the CCD-split encoding); RA, UX, GH (the message ID, flat encoding).
+- **Sources:** HW (`tests/test_co_core.py`); ZS (the CCD-split encoding); RA, UX, GH (the message ID, flat encoding).
 
 <a id="mp1-0x4c"></a>
 ### MP1 0x4C: Curve Optimizer, all cores
@@ -371,7 +371,7 @@ Messages that are **not** in the catalogue, and why, are in [chapter 8](08-unkno
 - **Pros:** the simplest undervolt. One number.
 - **Cons:** limited by the weakest core. Lost on reboot and suspend.
 - **Status:** **verified.** -5 under a fixed single-core load at matched starting temperature: -6.8 mV at +32 MHz; 0 restores the factory curve.
-- **Sources:** HW (`tests/test_phase6.py`); RA, UX, ZS, GH.
+- **Sources:** HW (`tests/test_co_all.py`); RA, UX, ZS, GH.
 
 <a id="mp1-0x63"></a>
 ### MP1 0x63: cHTC temperature limit

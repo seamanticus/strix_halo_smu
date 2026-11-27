@@ -17,7 +17,7 @@ A **kernel module** is a piece of kernel code that can be loaded and unloaded wh
 
 A **driver** is kernel code that manages a piece of hardware and offers it to user space through a defined interface. This module is a small driver: its hardware is the SMU mailboxes, and its interface is one device file.
 
-**Out-of-tree** means the module's source is not part of the official Linux source tree, so it is built separately against the headers of your running kernel. When the kernel is updated, the module has to be rebuilt; [DKMS](03-install.md#33-permanent-install-with-dkms) does that automatically.
+**Out-of-tree** means the module's source is not part of the official Linux source tree, so it is built separately against the headers of your running kernel. When the kernel is updated, the module has to be rebuilt; [DKMS](03-install.md#33-permanent-install-make-install) does that automatically.
 
 ## 1.2 The SMU
 

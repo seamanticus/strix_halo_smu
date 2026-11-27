@@ -37,7 +37,9 @@ Tuning AMD laptops on Linux usually goes through `ryzen_smu`, a generic driver f
 - **Lockdown aware.** State-changing messages obey `LOCKDOWN_MSR`, like the kernel's MSR driver.
 - **`shsctl`**: a command-line tool with readable output, live monitoring, undervolt and power-limit commands, dry-run, and plain-English errors.
 - **`libshs`**: a small C library with named, verified table fields and encoders for verified messages.
-- **DKMS packaging** for automatic rebuilds on kernel updates.
+- **One-command install and removal**: `sudo make install` registers the module with DKMS (rebuilt on kernel updates), installs the tools, library and headers, and enables loading at boot; `sudo make uninstall` reverses all of it.
+- **Clean builds**: all output goes to `build/`.
+- **CI** on Arch Linux x86_64 against the `linux`, `linux-zen` and `linux-lts` headers, warnings as errors, including an install/uninstall round trip.
 
 ## Technical insights
 
@@ -65,38 +67,35 @@ Verified on BIOS GZ302EA.311 (PMFW 10.100.2.0). A BIOS that changes any contract
 
 ## Installation
 
-You need the headers for your running kernel, a compiler, and `make`. For the permanent install you also need `dkms`. Full details, Secure Boot notes and troubleshooting: [Installation](docs/03-install.md).
+You need kernel 6.15 or newer with its headers, a compiler, and `make`. For the permanent install you also need `dkms`; `make install` tells you the exact package to install on Arch, Fedora or Debian/Ubuntu if anything is missing. Full details, Secure Boot notes and troubleshooting: [Installation](docs/03-install.md).
+
+`make` puts everything it builds in `build/`; the source tree stays clean.
 
 ### Try it (lost on reboot)
 
 ```sh
 git clone https://github.com/seamanticus/strix_halo_smu
 cd strix_halo_smu
-make && make -C user
-sudo insmod strix_halo_smu.ko
-sudo user/shsctl info
+make
+sudo insmod build/module/strix_halo_smu.ko
+sudo build/user/shsctl info
 ```
 
 > **Nothing persists with `insmod`.** After a reboot the module is not loaded, and every value you set is gone. Unload with `sudo rmmod strix_halo_smu`. Unloading does not undo values already sent; reboot or send the default (for example `shsctl co-all 0`).
 
-### Install for good (DKMS, loads at boot)
+### Install for good (one command, loads at every boot)
 
 ```sh
-sudo mkdir -p /usr/src/strix_halo_smu-0.1.0
-sudo cp Makefile dkms.conf strix_halo_smu.c strix_halo_smu.h /usr/src/strix_halo_smu-0.1.0/
-sudo dkms install strix_halo_smu/0.1.0
-echo strix_halo_smu | sudo tee /etc/modules-load.d/strix_halo_smu.conf
-sudo modprobe strix_halo_smu
-sudo install -m 0755 user/shsctl /usr/local/bin/shsctl
+make
+sudo make install
 ```
+
+This registers the module with DKMS (rebuilt automatically on every kernel update), installs `shsctl`, `libshs` and the headers under `/usr/local`, enables loading at boot, and loads it now.
 
 ### Remove
 
 ```sh
-sudo modprobe -r strix_halo_smu
-sudo dkms remove strix_halo_smu/0.1.0 --all
-sudo rm -r /usr/src/strix_halo_smu-0.1.0
-sudo rm -f /etc/modules-load.d/strix_halo_smu.conf /etc/modprobe.d/strix_halo_smu.conf /usr/local/bin/shsctl
+sudo make uninstall
 ```
 
 Do not run it alongside `ryzen_smu`.
