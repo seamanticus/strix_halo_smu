@@ -48,14 +48,14 @@ static char shs_alib_path[] = "\\_SB.ALIB";
 /* RSMU 0x65 measured up to 13.8 ms at idle; it is waited on outside AM00. */
 #define SHS_TABLE_TIMEOUT_US	100000
 
-/* Minimum PM table refresh interval; see research/safeguard_survey.md 7.7-7.8. */
+/* Minimum PM table refresh interval; see docs/02-safety.md 2.8. */
 #define SHS_REFRESH_MS		55
 #define SHS_REFRESH_NS		(SHS_REFRESH_MS * NSEC_PER_MSEC)
 
 #define SHS_TCTL_SMN		0x00059800
 /* Instantaneous Tctl in the table (M2 capture: r = 1.000 against k10temp); 0x5c is filtered. */
 #define SHS_PM_TCTL_OFF		0xb38
-/* Worst skew seen under a step load was 1.25 C; see plan section 4f. */
+/* Worst skew seen under a step load was 1.25 C; see docs/07-findings.md 7.8. */
 #define SHS_TCTL_TOLERANCE_MC	3000
 /* Longest transfer-to-transfer window the M2 calibration covers (55 ms polling). */
 #define SHS_CANARY_WINDOW_NS	(2 * SHS_REFRESH_NS)
@@ -131,7 +131,7 @@ struct shs_entry {
 	bool verified;		/* false: single-source, catalogued only to keep it gated */
 };
 
-/* Inclusion rule SG2; provenance per ID in research/safeguard_survey.md. */
+/* Inclusion rule and provenance per ID: docs/06-glossary.md. */
 static const struct shs_entry shs_catalogue[] = {
 	{ SHS_MBOX_MP1, SHS_MP1_TEST,			SHS_READ,	true },
 	{ SHS_MBOX_MP1, SHS_MP1_GET_PMFW_VERSION,	SHS_READ,	true },

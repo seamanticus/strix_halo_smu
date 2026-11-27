@@ -2,7 +2,7 @@
 /*
  * strix_halo_smu userspace interface, /dev/strix_halo_smu.
  *
- * Message IDs are the catalogue the module knows; see research/safeguard_survey.md
+ * Message IDs are the catalogue the module knows; see docs/06-glossary.md
  * for provenance. Values passed in args are firmware encodings, not checked.
  */
 #ifndef _UAPI_STRIX_HALO_SMU_H

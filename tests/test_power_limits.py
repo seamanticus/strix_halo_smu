@@ -41,7 +41,7 @@ TCTL_ABORT_C = 90.0
 TOL_W = 2.0
 WORDS = 16
 CORES = 16
-# Table power values (RyzenAdj generic layout, behaviour checked in research/m2/samples.bin).
+# Table power values (RyzenAdj generic layout, behaviour checked against k10temp; docs/05-pm-table.md).
 W_STAPM_VAL, W_FAST_LIM, W_FAST_VAL, W_SLOW_LIM, W_SLOW_VAL = 1, 2, 3, 4, 5
 LIMIT_WORDS = (0, 2, 4, 6)
 OFF_CORE_POWER, OFF_CORE_CLK, OFF_TCTL = 0xB90, 0xC50, 0xB38

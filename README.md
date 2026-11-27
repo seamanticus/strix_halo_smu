@@ -1,111 +1,140 @@
 # strix_halo_smu
 
-SMU mailbox transport for AMD Strix Halo on the ASUS ROG Flow Z13 GZ302EA, as an out-of-tree Linux module. It is a serialized, gated path to the MP1 and RSMU mailboxes plus the PM table. Policy (undervolt values, power limits, re-apply on resume) belongs in userspace.
+**A safe, verified channel to the power-management firmware of one laptop: the ASUS ROG Flow Z13 (2025), GZ302EA, with AMD's Ryzen AI MAX+ 395 "Strix Halo".**
+
+Read live power, limits, temperatures, clocks and voltages. Undervolt your cores. Cap package power. Do it through a kernel module that knows exactly which machine it is on, knows what every message it forwards does, and never collides with the BIOS.
+
+```sh
+$ sudo shsctl co-all -10
+co-all: sent mp1 0x4c arg0 0x000ffff6, SMU answered 0x01 (OK)
+$ sudo shsctl watch
+   time   power   limit       Tctl   skin/limit    max MHz  mean mV
+    1.0    48.1    48.3 stt     81.9   45.9/46.0      4108     1117
+```
+
+## Why it exists
+
+Tuning AMD laptops on Linux usually goes through `ryzen_smu`, a generic driver for some 25 chip families. On this machine it has three problems:
+
+1. **It races the BIOS.** This laptop's firmware talks to the same SMU mailbox from ACPI code, on its own schedule (profile changes, AC plug, EC events), with no idle check and no timeout. `ryzen_smu` does not take the firmware's lock, so a message can be overwritten mid-flight, or the BIOS can spin forever and hang the machine.
+2. **It truncates the telemetry table** to 3664 bytes. The firmware reports 4136.
+3. **It forwards any message number** to the firmware, including ones that disable thermal protection or hand it a memory address.
+
+`strix_halo_smu` takes the Unix route: **do one thing, for one machine, and do it well.** It supports exactly one model and one verified firmware contract, and refuses to load anywhere else. In exchange, every behaviour was read from this machine's own BIOS or measured on it. It is a transport, not a tuner: it decides no values and holds no policy. Values and when to reapply them belong to the program above it.
+
+## Features
+
+- **Identity guard.** Loads only on AMD family 0x1A model 0x70, DMI board `GZ302EA`, root complex `1022:1507`, with the BIOS lock and ALIB present.
+- **Firmware contract.** Loads only if the SMU interface version, PM table version and size, and ALIB revision match a verified set.
+- **BIOS-safe MP1 access.** Every MP1 transaction holds the firmware's own AML mutex `\_SB.AM00`, with 50 ms bounds, and refuses to send into a busy mailbox.
+- **Message catalogue.** Every message number is classed read, set, safeguard, table or deny, from BIOS evidence and hardware tests. Unknown numbers are refused.
+- **Two independent load-time gates**, closed by default: `allow_safeguard_writes` (thermal, current and protection limits) and `allow_unlisted` (uncatalogued numbers). They cannot be changed while the module runs.
+- **Full PM table** (0x1028 bytes), size taken from the firmware, refreshed at most every 55 ms, shared by all readers, with a `CLOCK_MONOTONIC` timestamp.
+- **Temperature canary.** After each refresh, table Tctl is checked against the hardware sensor `k10temp` reads. A mismatch over 3 C disables the table instead of serving misread data.
+- **Fault containment.** On an SMU timeout, the module drains under the lock, then refuses all further sends until reloaded.
+- **Send budget.** 16 messages per burst, then 1 per second, per mailbox, so no program can starve the BIOS.
+- **Audit trail.** Every state-changing send is logged in full (all arguments, sender, pid), taints the kernel `CPU_OUT_OF_SPEC`, and is counted in a root-only `send_stats` file.
+- **Lockdown aware.** State-changing messages obey `LOCKDOWN_MSR`, like the kernel's MSR driver.
+- **`shsctl`**: a command-line tool with readable output, live monitoring, undervolt and power-limit commands, dry-run, and plain-English errors.
+- **`libshs`**: a small C library with named, verified table fields and encoders for verified messages.
+- **DKMS packaging** for automatic rebuilds on kernel updates.
+
+## Technical insights
+
+Measured on this machine, and detailed in [the manual](docs/README.md):
+
+- **Sustained power is governed by Skin Temperature Tracking**, not STAPM. Table word `0x000` is the STT power cap: 71 W with skin headroom, settling at 48 W as the skin estimate reaches its 46 C limit. [More](docs/07-findings.md#72-what-limits-sustained-power-stt)
+- **STAPM (MP1 0x14) is accepted and ignored** on this firmware, across profiles and without `amd_pmf`. [More](docs/07-findings.md#73-stapm-is-accepted-but-has-no-effect)
+- **`amd_pmf` overwrites fast and slow limits** on every power-profile change. [More](docs/07-findings.md#74-amd_pmf-owns-the-fast-and-slow-limits)
+- **Per-core Curve Optimizer needs the CCD-split encoding** `(core / 8) << 28 | (core % 8) << 20 | steps`. The flat `core << 20` used by G-Helper and UXTU is refused for cores 8-15. [More](docs/07-findings.md#75-curve-optimizer)
+- **The PM table averages** over the time since the previous read. Poll steadily when measuring. [More](docs/05-pm-table.md#52-timing-read-this-before-measuring-anything)
+- **The BIOS's `ppt_pl1_spl` sets the STT power limit** (MP1 0x4A), not STAPM. [More](docs/07-findings.md#77-bios-power-and-thermal-values-per-profile)
+- **RyzenAdj's Tctl offset (0x5C) is a filtered value** lagging up to 14 C; real Tctl is at `0xB38`. [More](docs/05-pm-table.md#53-offset-map)
 
 ## Supported hardware
 
-The module binds only when every check passes, and refuses to load otherwise:
+| Component | Value |
+|---|---|
+| Machine | ASUS ROG Flow Z13 (2025), board `GZ302EA` |
+| CPU | AMD Ryzen AI MAX+ 395, family 0x1A model 0x70 |
+| BIOS interface (MP1 0x03) | 25 |
+| PM table (RSMU 0x06) | version `0x0064020C`, size `0x1028` |
+| ALIB SSDT `AmdTable` revision | 2 |
 
-- CPU: AMD family 0x1A model 0x70; root complex 1022:1507 at 0000:00:00.0
-- DMI: vendor `ASUSTeK COMPUTER INC.`, board `GZ302EA`
-- ACPI: `\_SB.AM00` and `\_SB.ALIB` present
-- Firmware contract, verified on hardware:
+Verified on BIOS GZ302EA.311 (PMFW 10.100.2.0). A BIOS that changes any contract value makes the module refuse to load until it is verified. See [open questions](docs/08-unknowns.md#85-new-bios-versions) for what to report.
 
-| BIOS interface (MP1 0x03) | PM table version (RSMU 0x06) | Table size | ALIB SSDT `AmdTable` revision |
-|---|---|---|---|
-| 25 | 0x0064020C | 0x1028 | 2 |
+## Installation
 
-Verified on BIOS GZ302EA.311, PMFW 10.100.2.0. A new BIOS needs a new verified tuple.
+You need the headers for your running kernel, a compiler, and `make`. For the permanent install you also need `dkms`. Full details, Secure Boot notes and troubleshooting: [Installation](docs/03-install.md).
 
-## Build and load
+### Try it (lost on reboot)
 
 ```sh
-make                      # needs headers for the running kernel (CONFIG_AMD_NODE=y)
+git clone https://github.com/seamanticus/strix_halo_smu
+cd strix_halo_smu
+make && make -C user
 sudo insmod strix_halo_smu.ko
-sudo dmesg | grep strix_halo_smu
+sudo user/shsctl info
 ```
 
-Do not load it alongside ryzen_smu or any other tool that drives the same mailboxes.
+> **Nothing persists with `insmod`.** After a reboot the module is not loaded, and every value you set is gone. Unload with `sudo rmmod strix_halo_smu`. Unloading does not undo values already sent; reboot or send the default (for example `shsctl co-all 0`).
 
-## Interface
+### Install for good (DKMS, loads at boot)
 
-`/dev/strix_halo_smu` (mode 0600; opening needs `CAP_SYS_RAWIO`). The definitions are in `strix_halo_smu.h`.
+```sh
+sudo mkdir -p /usr/src/strix_halo_smu-0.1.0
+sudo cp Makefile dkms.conf strix_halo_smu.c strix_halo_smu.h /usr/src/strix_halo_smu-0.1.0/
+sudo dkms install strix_halo_smu/0.1.0
+echo strix_halo_smu | sudo tee /etc/modules-load.d/strix_halo_smu.conf
+sudo modprobe strix_halo_smu
+sudo install -m 0755 user/shsctl /usr/local/bin/shsctl
+```
 
-- `SHS_IOC_MSG`, `struct shs_msg {mailbox, msg, args[6], rsp}`: one complete transaction. It returns 0 when the SMU answered; `rsp` holds the raw code (0x01 OK, 0xFC busy, 0xFD prerequisite, 0xFE unknown, 0xFF failed).
-- `SHS_IOC_TABLE`, `struct shs_table {buf, size, version, time_ns}`: copies the PM table snapshot together with its `CLOCK_MONOTONIC` completion time. A buffer smaller than the table returns `ENOSPC` with `size` set; the table is 0x1028 bytes on the verified contract.
-- `/sys/class/misc/strix_halo_smu/pm_table`: the same snapshot, read-only.
-- `/sys/class/misc/strix_halo_smu/send_stats` (root only): one `struct shs_send_stat` per (mailbox, msg), at index `mailbox * 256 + msg`.
+### Remove
 
-### PM table
+```sh
+sudo modprobe -r strix_halo_smu
+sudo dkms remove strix_halo_smu/0.1.0 --all
+sudo rm -r /usr/src/strix_halo_smu-0.1.0
+sudo rm -f /etc/modules-load.d/strix_halo_smu.conf /etc/modprobe.d/strix_halo_smu.conf /usr/local/bin/shsctl
+```
 
-- RSMU 0x65 refreshes the table at most once every 55 ms. Reads inside that window get the same snapshot, or the error from the last refresh.
-- Values are averages over the time since the previous refresh, not instantaneous. Poll steadily (about 10 Hz) when measuring.
-- Canary: the table's Tctl (offset 0xB38) is compared with the SMN Tctl sensor (0x59800) after every refresh that comes at most 110 ms after the previous one. A difference above 3 C disables the table (`EIO`) until reload.
+Do not run it alongside `ryzen_smu`.
 
-### Message gate
+## Usage
 
-Every message ID is looked up in the catalogue, `shs_catalogue[]` in `strix_halo_smu.c`:
+```sh
+sudo shsctl info                 # firmware, gates, taint
+sudo shsctl table                # labelled snapshot: power, limits, temperatures, per-core
+sudo shsctl watch                # live, one line per second
+sudo shsctl co-all -10           # undervolt all cores by 10 steps; 0 = factory
+sudo shsctl co-core 3 -15        # one core
+sudo shsctl fast-limit 45        # burst power ceiling, W
+sudo shsctl slow-limit 30        # sustained power ceiling, W
+sudo shsctl -n co-all -10        # dry run: show what would be sent
+shsctl help co-all               # details and safe-use notes per command
+```
 
-| Class | Examples | Requirement |
-| --- | --- | --- |
-| read | MP1 0x01-0x03, RSMU 0x06, 0x66 | none |
-| set | MP1 0x14-0x18, 0x23 (power limits), 0x4B/0x4C (Curve Optimizer) | fd opened for writing; not locked down (`LOCKDOWN_MSR`) |
-| safeguard | MP1 0x05/0x07, 0x19-0x1F, 0x33, 0x34, 0x4A, 0x63; RSMU 0x17-0x1C, 0x37-0x3E, 0x89, 0x92 | as set, plus `allow_safeguard_writes=1` at load |
-| table | RSMU 0x65 | only through the rate-limited refresh (`EPERM`) |
-| deny | MP1 0x25/0x26 (the BIOS passes a GPU BAR address through them) | never forwarded (`EPERM`) |
-| uncatalogued | anything else | `allow_unlisted=1` at load; otherwise `ENOMSG` |
+Everything is lost on reboot. Curve Optimizer is also lost on suspend, and power limits on a power-profile change. Start undervolting at -5 and go down in steps of 5, testing each.
 
-- Each state-changing send is logged in full (all six args, caller, pid) and taints the kernel `CPU_OUT_OF_SPEC`.
-- Both gate parameters are load-time only (0400) and closed by default.
-- Send budget: each mailbox admits a burst of 16 messages, refilled at one per second, across all callers and classes. Calls beyond that fail with `EAGAIN` before reaching the SMU. The budget bounds how long userspace can hold `\_SB.AM00` against the BIOS, and how fast the log grows.
+- **New to this?** Read the [shsctl user guide](docs/shsctl.md).
+- **Writing a client?** See the [programming interface](docs/04-interface.md) and the [message glossary](docs/06-glossary.md).
 
-### Concurrency with the BIOS
+## Documentation
 
-ALIB drives the MP1 mailbox asynchronously, on EC events, AC changes and profile changes. Every MP1 transaction holds the AML mutex `\_SB.AM00` that ALIB itself uses. The response timeout is 50 ms. On a timeout the module drains the message for up to 100 ms while still holding the lock, then refuses all further sends (`EIO`) until reload.
+The [manual](docs/README.md) covers concepts from scratch, the safety model, the interface, the PM table layout, every catalogued message with its risks and sources, all measurements, open questions, the test suite, and sources.
 
-## Verified messages
+## Credits
 
-| Message | Encoding | Verified |
-| --- | --- | --- |
-| MP1 0x01 / 0x02 / 0x03 | test (arg + 1) / PMFW version / interface version | phase 2 |
-| RSMU 0x06 / 0x66 / 0x65 | table version+size / table base (lo, hi) / transfer (arg 3) | phase 3 |
-| MP1 0x4C CO all-core | 20-bit two's complement steps (-5 = 0xFFFFB); 0 restores the default | phase 6: -5 gave -6.8 mV at +32 MHz on one core; 0 returned to baseline within 0.5 mV |
-| MP1 0x4B CO per-core | `(core / 8) << 28 \| (core % 8) << 20 \| steps & 0xFFFF`: CCD in bits 31-28, core within the CCD in 23-20, 16-bit steps | core 2 (CCD 0) at -10: -11.7 mV at +68 MHz; core 10 (CCD 1) at -10: +108 MHz at -3.1 mV; neighbours unchanged within control drift; per-core 0 restored both. The flat form `core << 20` (G-Helper, UXTU) is refused with 0xFF for cores 8-15 |
-| MP1 0x15 fast limit | mW; lands in table 0x08 | 45000 capped package power (0x0C) at 45.0 W from the first second of load, clock 3532 -> 2702 MHz |
-| MP1 0x16 slow limit | mW; lands in table 0x10 | 30000 sent mid-load cut power 52 -> 30 W within seconds, clock 3161 -> 2175 MHz |
-| MP1 0x14 STAPM limit | mW (BIOS `STPV` encoding) | accepted (0x01) but **no measurable effect**: 20000 left power at the slow limit for 300 s in balanced and low-power, with and without power-profiles-daemon, and with amd_pmf never loaded. Not verified |
+This module stands on the work of the projects that mapped AMD's SMU in the open: [RyzenAdj](https://github.com/FlyGoat/RyzenAdj), [ryzen_smu](https://github.com/amkillam/ryzen_smu) and the [CkNoSFeRaTU fork](https://github.com/CkNoSFeRaTU/ryzen_smu), [Universal x86 Tuning Utility](https://github.com/JamesCJ60/Universal-x86-Tuning-Utility), [ZenStates-Core](https://github.com/irusanov/ZenStates-Core), [G-Helper](https://github.com/seerge/g-helper), [ZenMaster](https://github.com/HorizonUnix/ZenMaster), [PawnIO](https://github.com/namazso/PawnIO.Modules) and [z13ctl](https://github.com/dahui/z13ctl). Thanks also to the GZ302EA owner who posted a full table dump in [RyzenAdj #363](https://github.com/FlyGoat/RyzenAdj/issues/363), and to AMD for the SMU headers published in the Linux kernel. What was taken from each, and what held up, is in [Sources](docs/10-sources.md).
 
-Table word 0x00, labelled "STAPM limit" by RyzenAdj, is the **STT power cap** on this machine: the skin-temperature controller's output. It sits at 71 W while the skin estimate (0x6C) has headroom below the skin limit (0x68, 46 C in balanced), and falls as the estimate approaches it; in a 10 min all-core load it settled near 48 W with the estimate at 45.96 C and was the binding cap 81% of the time. Power under load is the lowest of 0x00, 0x08 and 0x10. For sustained loads the skin limit (MP1 0x33) and STT power limit (MP1 0x4A), both safeguard class, govern power, not STAPM.
+## Disclosure
 
-Other set and safeguard entries are catalogued from BIOS and tool evidence but have not been exercised on hardware.
-
-### Power limits have another owner
-
-`amd_pmf` sets the fast and slow limits from its own tables (balanced 71/52 W, performance 86/70 W, low-power 55/40 W) and re-sends them on every `platform_profile` change, which overwrites any value sent through this module. It did not re-send them on its own during 5 minutes of load. A client that sets limits has to re-apply them after a profile change; cycling the profile is also the clean way back to the defaults. With `amd_pmf` not loaded the firmware starts from the same 71/52 W, and 0x15/0x16 work the same way.
-
-## Userspace
-
-`user/` holds `libshs` (`shs.h`, `libshs.c`) and the `shsctl` command line client. Build with `make -C user`.
-
-- The library is a thin layer: one call per transaction, the table snapshot, named fields of table 0x0064020C (they return NAN for any other version), and `shs_co_all()` / `shs_co_core()`, encoders for the Curve Optimizer messages verified on hardware. It holds no policy.
-- `shsctl info`: PMFW and interface version, table version and size.
-- `shsctl table [--raw]`: limits, Tctl and the per-core clock, voltage, power and temperature; `--raw` writes the binary table to stdout.
-- `shsctl msg mp1|rsmu ID [ARG...]`: a raw transaction. The module's gate decides what is allowed; exit code 3 means the SMU answered something other than OK.
-- `shsctl co-all STEPS`: CO all-core; 0 restores the default.
-- `shsctl co-core CORE STEPS`: CO on one core (0-15); 0 restores it.
-- `shsctl stats`: the non-empty `send_stats` records.
-
-## Tests
-
-Run from this directory with the module loaded with default parameters:
-
-- `tests/test_phase5.py`: interface and gate. Sends read-class messages only; everything else is refused before reaching the SMU.
-- `tests/test_m2_window.py`: table averaging and the canary window. Reads only.
-- `tests/test_phase6.py [--control]`: CO -5 then 0, under 1-core and all-core load, each load starting at matched Tctl. Run it on AC and at idle; it aborts without sending if idle Tctl is above 45 C or 1-core boost is below 4.5 GHz. `--control` sends nothing. Without it, the kernel stays tainted until reboot.
-- `tests/test_power_limits.py control|fast|slow|stapm [--no-pmf]`: lowers one power limit under sustained all-core load, judges enforcement on table power, restores via MP1 and a profile cycle (MP1 only with `--no-pmf`). Run on AC.
-- `tests/test_co_per_core.py map | control CORE | flat CORE | ccd CORE`: per-core CO on one core, measured against a neighbour in the same CCD. `ccd` is the verified encoding; `flat` is kept to show its refusal for cores 8-15.
-- `tests/capture_table.py` and `tests/analyze_cap.py`: long read-only capture of the table with every temperature sensor, and the offline analysis that identified word 0x00.
+- **Not affiliated with, endorsed by, or supported by AMD or ASUS.** Names are used only to identify the hardware.
+- **Use at your own risk.** Undervolting and changing power limits run hardware outside its factory settings. A too-negative undervolt crashes the machine and can corrupt unsaved data. The safeguard gate exists because some messages can cause lasting damage if misused. No warranty of any kind, as stated in the licences.
+- **The kernel is tainted** (`O` for the out-of-tree module, `S` after the first state-changing message) until reboot. Mention it in any kernel bug report.
+- **SMU messages and table offsets are undocumented by AMD.** Everything here was reverse-engineered or measured. "Verified" means measured on one GZ302EA, BIOS 311.
 
 ## License
 
-MIT (see `LICENSE`), except the kernel module source, `strix_halo_smu.c`, which is dual `GPL-2.0 OR MIT`. The module calls kernel functions exported to GPL-compatible modules only (`amd_smn_read/write`, `dmi_match`, `region_intersects`), and the kernel accepts MIT only as `Dual MIT/GPL`. It may still be used under MIT.
+MIT (see [`LICENSE`](LICENSE)), except the kernel module source, `strix_halo_smu.c`, which is dual `GPL-2.0 OR MIT`. The module calls kernel functions exported to GPL-compatible modules only (`amd_smn_read/write`, `dmi_match`, `region_intersects`), and the kernel accepts MIT only as `Dual MIT/GPL`. It may still be used under MIT.
