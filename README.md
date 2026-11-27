@@ -47,7 +47,7 @@ Do not load it alongside ryzen_smu or any other tool that drives the same mailbo
 Every message ID is looked up in the catalogue, `shs_catalogue[]` in `strix_halo_smu.c`:
 
 | Class | Examples | Requirement |
-|---|---|---|
+| --- | --- | --- |
 | read | MP1 0x01-0x03, RSMU 0x06, 0x66 | none |
 | set | MP1 0x14-0x18, 0x23 (power limits), 0x4B/0x4C (Curve Optimizer) | fd opened for writing; not locked down (`LOCKDOWN_MSR`) |
 | safeguard | MP1 0x05/0x07, 0x19-0x1F, 0x33, 0x34, 0x4A, 0x63; RSMU 0x17-0x1C, 0x37-0x3E, 0x89, 0x92 | as set, plus `allow_safeguard_writes=1` at load |
@@ -66,7 +66,7 @@ ALIB drives the MP1 mailbox asynchronously, on EC events, AC changes and profile
 ## Verified messages
 
 | Message | Encoding | Verified |
-|---|---|---|
+| --- | --- | --- |
 | MP1 0x01 / 0x02 / 0x03 | test (arg + 1) / PMFW version / interface version | phase 2 |
 | RSMU 0x06 / 0x66 / 0x65 | table version+size / table base (lo, hi) / transfer (arg 3) | phase 3 |
 | MP1 0x4C CO all-core | 20-bit two's complement steps (-5 = 0xFFFFB); 0 restores the default | phase 6: -5 gave -6.8 mV at +32 MHz on one core; 0 returned to baseline within 0.5 mV |
@@ -74,7 +74,7 @@ ALIB drives the MP1 mailbox asynchronously, on EC events, AC changes and profile
 | MP1 0x16 slow limit | mW; lands in table 0x10 | 30000 sent mid-load cut power 52 -> 30 W within seconds, clock 3161 -> 2175 MHz |
 | MP1 0x14 STAPM limit | mW (BIOS `STPV` encoding) | accepted (0x01) but **no measurable effect**: 20000 left power at the slow limit for 300 s in balanced and low-power, with and without power-profiles-daemon, and with amd_pmf never loaded. Not verified |
 
-Table word 0x00, labelled "STAPM limit" by RyzenAdj, is not a fixed limit on this machine: it varies by itself (45-71 W) and power is capped at the lowest of 0x00, 0x08 and 0x10. It reads the fast limit while that is lower. Its source is unidentified; it is not the skin estimate (0x6C, correlation 0.09).
+Table word 0x00, labelled "STAPM limit" by RyzenAdj, is the **STT power cap** on this machine: the skin-temperature controller's output. It sits at 71 W while the skin estimate (0x6C) has headroom below the skin limit (0x68, 46 C in balanced), and falls as the estimate approaches it; in a 10 min all-core load it settled near 48 W with the estimate at 45.96 C and was the binding cap 81% of the time. Power under load is the lowest of 0x00, 0x08 and 0x10. For sustained loads the skin limit (MP1 0x33) and STT power limit (MP1 0x4A), both safeguard class, govern power, not STAPM.
 
 Other set and safeguard entries are catalogued from BIOS and tool evidence but have not been exercised on hardware.
 
