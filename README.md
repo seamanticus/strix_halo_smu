@@ -72,15 +72,15 @@ ALIB drives the MP1 mailbox asynchronously, on EC events, AC changes and profile
 | MP1 0x4C CO all-core | 20-bit two's complement steps (-5 = 0xFFFFB); 0 restores the default | phase 6: -5 gave -6.8 mV at +32 MHz on one core; 0 returned to baseline within 0.5 mV |
 | MP1 0x15 fast limit | mW; lands in table 0x08 | 45000 capped package power (0x0C) at 45.0 W from the first second of load, clock 3532 -> 2702 MHz |
 | MP1 0x16 slow limit | mW; lands in table 0x10 | 30000 sent mid-load cut power 52 -> 30 W within seconds, clock 3161 -> 2175 MHz |
-| MP1 0x14 STAPM limit | mW (BIOS `STPV` encoding) | accepted (0x01) but **no measurable effect**: 20000 left power at 52 W for 300 s, no table word changed. Not verified |
+| MP1 0x14 STAPM limit | mW (BIOS `STPV` encoding) | accepted (0x01) but **no measurable effect**: 20000 left power at the slow limit for 300 s in balanced and low-power, with and without power-profiles-daemon, and with amd_pmf never loaded. Not verified |
 
-Table word 0x00, labelled "STAPM limit" by RyzenAdj, is not a limit on this machine: it drifts under load and reads the fast limit while that is lower.
+Table word 0x00, labelled "STAPM limit" by RyzenAdj, is not a fixed limit on this machine: it varies by itself (45-71 W) and power is capped at the lowest of 0x00, 0x08 and 0x10. It reads the fast limit while that is lower. Its source is unidentified; it is not the skin estimate (0x6C, correlation 0.09).
 
 Other set and safeguard entries are catalogued from BIOS and tool evidence but have not been exercised on hardware.
 
 ### Power limits have another owner
 
-`amd_pmf` sets the fast and slow limits from its own tables (balanced 71/52 W, performance 86/70 W) and re-sends them on every `platform_profile` change, which overwrites any value sent through this module. It did not re-send them on its own during 5 minutes of load. A client that sets limits has to re-apply them after a profile change; cycling the profile is also the clean way back to the defaults.
+`amd_pmf` sets the fast and slow limits from its own tables (balanced 71/52 W, performance 86/70 W, low-power 55/40 W) and re-sends them on every `platform_profile` change, which overwrites any value sent through this module. It did not re-send them on its own during 5 minutes of load. A client that sets limits has to re-apply them after a profile change; cycling the profile is also the clean way back to the defaults. With `amd_pmf` not loaded the firmware starts from the same 71/52 W, and 0x15/0x16 work the same way.
 
 ## Userspace
 
