@@ -13,8 +13,8 @@ on abort. Enforcement is judged on the table's power values, not on labels.
   slow     MP1 0x16 = 30000 mW 30 s into the load, 90 s load
   stapm    MP1 0x14 = 20000 mW before the load, 300 s load
 
-Only lowered limits are sent. Run on AC in the balanced profile:
-  sudo python3 tests/test_power_limits.py EXPERIMENT > EXPERIMENT.txt
+Only lowered limits are sent. Runs in the current platform_profile, named in the output:
+  sudo python3 tests/test_power_limits.py EXPERIMENT > EXPERIMENT-PROFILE.txt
 """
 import csv
 import ctypes
@@ -169,8 +169,15 @@ def main():
             if f.read().strip() != "N":
                 sys.exit(f"{p} is open; reload the module with defaults")
     with open(PROFILE) as f:
-        if f.read().strip() != "balanced":
-            sys.exit("platform_profile is not balanced; nothing sent")
+        profile = f.read().strip()
+    with open(PROFILE + "_choices") as f:
+        choices = f.read().split()
+    # Restore by switching away and back, so amd_pmf re-sends this profile's own limits.
+    other = next((c for c in ("performance", "balanced") if c in choices and c != profile), None)
+    if other is None:
+        sys.exit(f"no other profile to cycle through in {choices}; nothing sent")
+    print(f"profile {profile} (choices {' '.join(choices)}), restore cycles through {other}")
+    tag = f"{name}-{profile}"
 
     fd = os.open(DEV, os.O_RDWR if msg else os.O_RDONLY)
     run, procs, sent, ok = Run(fd), [], False, None
@@ -220,12 +227,12 @@ def main():
             if sent:
                 # Restore both owners: our MP1 value, then amd_pmf's SPL/FPPT/SPPT via a profile change.
                 send(fd, msg, restore_mw, run.t0)
-                set_profile("performance")
+                set_profile(other)
                 run.poll(3, "restore")
-                set_profile("balanced")
+                set_profile(profile)
             run.poll(15, "cool")
         finally:
-            run.save(f"{name}.csv")
+            run.save(f"{tag}.csv")
             os.close(fd)
 
     run.summarize(0, load_t0, "idle")
