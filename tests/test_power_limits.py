@@ -3,22 +3,26 @@
 """Power-limit enforcement under sustained all-core load.
 
 Each experiment: cool to idle, all-core load, optionally one lowered limit sent
-over MP1, then the limits are restored by cycling platform_profile, which makes
-amd_pmf re-send its own SPL/FPPT/SPPT. Table words 0x00-0x3C, summed core power,
-mean core clock and Tctl are logged at 10 Hz to <experiment>.csv, written even
-on abort. Enforcement is judged on the table's power values, not on labels.
+over MP1, then restored: the idle value is sent back over MP1 and, with amd_pmf
+loaded, every platform-profile handler is cycled and set back to its own profile
+so amd_pmf re-sends its SPL/FPPT/SPPT. Table words 0x00-0x3C, summed core power,
+mean core clock and Tctl are logged at 10 Hz to <experiment>-<tag>.csv, written
+even on abort. Enforcement is judged on the table's power values, not on labels.
 
   control  no send, 120 s load
   fast     MP1 0x15 = 45000 mW before the load, 60 s load
   slow     MP1 0x16 = 30000 mW 30 s into the load, 90 s load
   stapm    MP1 0x14 = 20000 mW before the load, 300 s load
 
-Only lowered limits are sent. Runs in the current platform_profile, named in the output:
-  sudo python3 tests/test_power_limits.py EXPERIMENT > EXPERIMENT-PROFILE.txt
+Only lowered limits are sent. Runs in the current profiles, named in the output.
+--no-pmf requires amd_pmf absent (boot with modprobe.blacklist=amd_pmf); the
+restore is then MP1 only, and a reboot is the clean way back.
+  sudo python3 tests/test_power_limits.py EXPERIMENT [--no-pmf] > OUT.txt
 """
 import csv
 import ctypes
 import fcntl
+import glob
 import multiprocessing as mp
 import os
 import statistics as st
@@ -28,8 +32,9 @@ import time
 
 DEV = "/dev/strix_halo_smu"
 PARAMS = "/sys/module/strix_halo_smu/parameters"
-PROFILE = "/sys/firmware/acpi/platform_profile"
+HANDLERS = "/sys/class/platform-profile"
 MP1 = 0
+HOLD_SAMPLES = 10
 IDLE_TCTL_MAX_C = 50.0
 COOL_TIMEOUT_S = 300
 TCTL_ABORT_C = 90.0
@@ -83,9 +88,30 @@ def send(fd, msg, mw, t0):
     return rsp
 
 
-def set_profile(name):
-    with open(PROFILE, "w") as f:
-        f.write(name)
+def read(path):
+    with open(path) as f:
+        return f.read().strip()
+
+
+def handlers():
+    """(profile file, handler name, current profile, choices) per platform-profile handler."""
+    return [(f"{d}/profile", read(f"{d}/name"), read(f"{d}/profile"), read(f"{d}/choices").split())
+            for d in sorted(glob.glob(f"{HANDLERS}/platform-profile-*"))]
+
+
+def write(path, value):
+    with open(path, "w") as f:
+        f.write(value)
+
+
+def held(rows, word, value):
+    """True if word reads value for HOLD_SAMPLES consecutive samples, not just passing through."""
+    n = 0
+    for r in rows:
+        n = n + 1 if abs(r[2 + word] - value) < 0.05 else 0
+        if n >= HOLD_SAMPLES:
+            return True
+    return False
 
 
 def spin(cpu):
@@ -150,9 +176,9 @@ def verdict(run, name, low_w, judged, load_t0, send_t, end):
         power = st.median(r[2 + W_FAST_VAL] for r in win)
         what = "0x0c median, last 20 s"
     avg = st.median(r[2 + judged] for r in run.window(end - 20, end))
-    landed = sorted({f"{i * 4:#06x}" for r in run.window(send_t + 1, end)
-                     for i in range(WORDS) if abs(r[2 + i] - low_w) < 0.05})
-    print(f"words reading {low_w:.2f} W after the send: {', '.join(landed) or 'none'}")
+    after = run.window(send_t + 0.5, end)
+    landed = [f"{i * 4:#06x}" for i in range(WORDS) if held(after, i, low_w)]
+    print(f"words holding {low_w:.2f} W for >= {HOLD_SAMPLES / 10:.0f} s after the send: {', '.join(landed) or 'none'}")
     ok = power <= low_w + TOL_W
     print(f"{'PASS' if ok else 'FAIL'} {what} {power:.2f} W vs limit {low_w:.2f} W "
           f"(averaged word {judged * 4:#06x} last 20 s: {avg:.2f} W)")
@@ -160,24 +186,35 @@ def verdict(run, name, low_w, judged, load_t0, send_t, end):
 
 
 def main():
-    if len(sys.argv) != 2 or sys.argv[1] not in EXPERIMENTS:
-        sys.exit(f"usage: {sys.argv[0]} {'|'.join(EXPERIMENTS)}")
-    name = sys.argv[1]
+    args = sys.argv[1:]
+    no_pmf = "--no-pmf" in args
+    args = [a for a in args if a != "--no-pmf"]
+    if len(args) != 1 or args[0] not in EXPERIMENTS:
+        sys.exit(f"usage: {sys.argv[0]} {'|'.join(EXPERIMENTS)} [--no-pmf]")
+    name = args[0]
     msg, low, send_at, load_s, judged = EXPERIMENTS[name]
     for p in ("allow_unlisted", "allow_safeguard_writes"):
         with open(f"{PARAMS}/{p}") as f:
             if f.read().strip() != "N":
                 sys.exit(f"{p} is open; reload the module with defaults")
-    with open(PROFILE) as f:
-        profile = f.read().strip()
-    with open(PROFILE + "_choices") as f:
-        choices = f.read().split()
-    # Restore by switching away and back, so amd_pmf re-sends this profile's own limits.
-    other = next((c for c in ("performance", "balanced") if c in choices and c != profile), None)
-    if other is None:
-        sys.exit(f"no other profile to cycle through in {choices}; nothing sent")
-    print(f"profile {profile} (choices {' '.join(choices)}), restore cycles through {other}")
-    tag = f"{name}-{profile}"
+
+    pmf = os.path.isdir("/sys/module/amd_pmf")
+    if no_pmf and pmf:
+        sys.exit("--no-pmf but amd_pmf is loaded; boot with modprobe.blacklist=amd_pmf. Nothing sent")
+    if not no_pmf and not pmf:
+        sys.exit("amd_pmf is not loaded; pass --no-pmf for that configuration. Nothing sent")
+    hs = handlers()
+    for path, hname, prof, choices in hs:
+        print(f"handler {hname}: {prof} (choices {' '.join(choices)})")
+    other = None
+    if pmf:
+        # Cycle through a profile every handler offers and none is in, so amd_pmf re-sends.
+        common = set.intersection(*(set(h[3]) for h in hs)) if hs else set()
+        other = next((c for c in ("performance", "balanced") if c in common
+                      and all(h[2] != c for h in hs)), None)
+        if other is None:
+            sys.exit("no profile to cycle through for the restore; nothing sent")
+    tag = f"{name}-{'nopmf' if no_pmf else 'pmf'}-{'-'.join(h[2] for h in hs) or 'noprofile'}"
 
     fd = os.open(DEV, os.O_RDWR if msg else os.O_RDONLY)
     run, procs, sent, ok = Run(fd), [], False, None
@@ -195,8 +232,12 @@ def main():
             print("ABORT the lowered value is not below the current limits, nothing sent")
             return 2
         restore_mw = round((slow_lim if msg == 0x16 else fast_lim) * 1000) if msg else None
-        print(f"amd_pmf {'loaded' if os.path.isdir('/sys/module/amd_pmf') else 'not loaded'}; "
-              f"restore: {f'mp1 0x{msg:02x} {restore_mw} mW, then ' if msg else ''}profile cycle")
+        if msg == 0x14 and not pmf:
+            # No table word shows the STAPM limit, so its prior value is unknown; lowered is the safe side.
+            restore_mw = None
+        print(f"amd_pmf {'loaded' if pmf else 'not loaded'}; restore: "
+              f"{f'mp1 0x{msg:02x} {restore_mw} mW' if restore_mw else 'none (reboot)' if msg else 'none'}"
+              f"{f', then profile cycle through {other}' if other else ''}")
 
         send_t = None
         if msg is not None and send_at == 0:
@@ -225,11 +266,14 @@ def main():
             p.join()
         try:
             if sent:
-                # Restore both owners: our MP1 value, then amd_pmf's SPL/FPPT/SPPT via a profile change.
-                send(fd, msg, restore_mw, run.t0)
-                set_profile(other)
-                run.poll(3, "restore")
-                set_profile(profile)
+                if restore_mw:
+                    send(fd, msg, restore_mw, run.t0)
+                if other:
+                    for path, _, _, _ in hs:
+                        write(path, other)
+                    run.poll(3, "restore")
+                    for path, _, prof, _ in hs:
+                        write(path, prof)
             run.poll(15, "cool")
         finally:
             run.save(f"{tag}.csv")
