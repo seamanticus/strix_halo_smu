@@ -171,3 +171,22 @@ int shs_co_all(int fd, int steps, uint32_t *rsp)
 	args[0] = shs_co_encode(steps);
 	return shs_msg(fd, SHS_MBOX_MP1, SHS_MP1_CO_ALL_CORE, args, rsp);
 }
+
+/* The SMU refuses a core index above 7 in bits 23-20 (0xFF); the CCD goes in bits 31-28. */
+uint32_t shs_co_core_encode(unsigned int core, int steps)
+{
+	return (core / 8) << 28 | (core % 8) << 20 | ((uint32_t)steps & 0xffff);
+}
+
+int shs_co_core(int fd, unsigned int core, int steps, uint32_t *rsp)
+{
+	uint32_t args[SHS_NUM_ARGS] = { 0 };
+
+	if (core >= SHS_TABLE_CORES)
+		return -EINVAL;
+	if (steps < INT16_MIN || steps > INT16_MAX)
+		return -ERANGE;
+
+	args[0] = shs_co_core_encode(core, steps);
+	return shs_msg(fd, SHS_MBOX_MP1, SHS_MP1_CO_PER_CORE, args, rsp);
+}

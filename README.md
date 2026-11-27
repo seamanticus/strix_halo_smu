@@ -70,7 +70,7 @@ ALIB drives the MP1 mailbox asynchronously, on EC events, AC changes and profile
 | MP1 0x01 / 0x02 / 0x03 | test (arg + 1) / PMFW version / interface version | phase 2 |
 | RSMU 0x06 / 0x66 / 0x65 | table version+size / table base (lo, hi) / transfer (arg 3) | phase 3 |
 | MP1 0x4C CO all-core | 20-bit two's complement steps (-5 = 0xFFFFB); 0 restores the default | phase 6: -5 gave -6.8 mV at +32 MHz on one core; 0 returned to baseline within 0.5 mV |
-| MP1 0x4B CO per-core | `core << 20 \| steps & 0xFFFF`; cores 0-7 only so far (8-15 encoding unsettled) | core 2 at -10: -11.7 mV at +68 MHz, neighbour core 3 unchanged (-1.0 mV, as in the no-send control); per-core 0 restored it exactly |
+| MP1 0x4B CO per-core | `(core / 8) << 28 \| (core % 8) << 20 \| steps & 0xFFFF`: CCD in bits 31-28, core within the CCD in 23-20, 16-bit steps | core 2 (CCD 0) at -10: -11.7 mV at +68 MHz; core 10 (CCD 1) at -10: +108 MHz at -3.1 mV; neighbours unchanged within control drift; per-core 0 restored both. The flat form `core << 20` (G-Helper, UXTU) is refused with 0xFF for cores 8-15 |
 | MP1 0x15 fast limit | mW; lands in table 0x08 | 45000 capped package power (0x0C) at 45.0 W from the first second of load, clock 3532 -> 2702 MHz |
 | MP1 0x16 slow limit | mW; lands in table 0x10 | 30000 sent mid-load cut power 52 -> 30 W within seconds, clock 3161 -> 2175 MHz |
 | MP1 0x14 STAPM limit | mW (BIOS `STPV` encoding) | accepted (0x01) but **no measurable effect**: 20000 left power at the slow limit for 300 s in balanced and low-power, with and without power-profiles-daemon, and with amd_pmf never loaded. Not verified |
@@ -87,11 +87,12 @@ Other set and safeguard entries are catalogued from BIOS and tool evidence but h
 
 `user/` holds `libshs` (`shs.h`, `libshs.c`) and the `shsctl` command line client. Build with `make -C user`.
 
-- The library is a thin layer: one call per transaction, the table snapshot, named fields of table 0x0064020C (they return NAN for any other version), and `shs_co_all()`, an encoder for the only set-class message verified on hardware. It holds no policy.
+- The library is a thin layer: one call per transaction, the table snapshot, named fields of table 0x0064020C (they return NAN for any other version), and `shs_co_all()` / `shs_co_core()`, encoders for the Curve Optimizer messages verified on hardware. It holds no policy.
 - `shsctl info`: PMFW and interface version, table version and size.
 - `shsctl table [--raw]`: limits, Tctl and the per-core clock, voltage, power and temperature; `--raw` writes the binary table to stdout.
 - `shsctl msg mp1|rsmu ID [ARG...]`: a raw transaction. The module's gate decides what is allowed; exit code 3 means the SMU answered something other than OK.
 - `shsctl co-all STEPS`: CO all-core; 0 restores the default.
+- `shsctl co-core CORE STEPS`: CO on one core (0-15); 0 restores it.
 - `shsctl stats`: the non-empty `send_stats` records.
 
 ## Tests
@@ -101,7 +102,9 @@ Run from this directory with the module loaded with default parameters:
 - `tests/test_phase5.py`: interface and gate. Sends read-class messages only; everything else is refused before reaching the SMU.
 - `tests/test_m2_window.py`: table averaging and the canary window. Reads only.
 - `tests/test_phase6.py [--control]`: CO -5 then 0, under 1-core and all-core load, each load starting at matched Tctl. Run it on AC and at idle; it aborts without sending if idle Tctl is above 45 C or 1-core boost is below 4.5 GHz. `--control` sends nothing. Without it, the kernel stays tainted until reboot.
-- `tests/test_power_limits.py control|fast|slow|stapm`: lowers one power limit under sustained all-core load, judges enforcement on table power, restores via MP1 and a profile cycle. Run in the balanced profile on AC.
+- `tests/test_power_limits.py control|fast|slow|stapm [--no-pmf]`: lowers one power limit under sustained all-core load, judges enforcement on table power, restores via MP1 and a profile cycle (MP1 only with `--no-pmf`). Run on AC.
+- `tests/test_co_per_core.py map | control CORE | flat CORE | ccd CORE`: per-core CO on one core, measured against a neighbour in the same CCD. `ccd` is the verified encoding; `flat` is kept to show its refusal for cores 8-15.
+- `tests/capture_table.py` and `tests/analyze_cap.py`: long read-only capture of the table with every temperature sensor, and the offline analysis that identified word 0x00.
 
 ## License
 

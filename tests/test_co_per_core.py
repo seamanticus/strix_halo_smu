@@ -4,8 +4,8 @@
 
   map                  read-only: spin each logical CPU, report the busiest table core
   control CORE         no sends: the three states below, to measure drift
-  flat CORE            arg = core << 20 | steps & 0xFFFF (G-Helper, UXTU)
-  ccd CORE             arg = (core / 8) << 28 | (core % 8) << 20 | steps & 0xFFFF (ZenStates)
+  flat CORE            arg = core << 20 | steps & 0xFFFF (G-Helper, UXTU); refused (0xFF) for 8-15
+  ccd CORE             arg = (core / 8) << 28 | (core % 8) << 20 | steps & 0xFFFF (ZenStates); verified
 
 For cores 0-7 both encodings give the same word; they differ for 8-15. Each
 experiment: baseline -> CO STEPS on CORE -> 0 on CORE, every state measured as a

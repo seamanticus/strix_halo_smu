@@ -14,6 +14,7 @@ static const char usage[] =
 	"       shsctl table [--raw]\n"
 	"       shsctl msg mp1|rsmu ID [ARG...]\n"
 	"       shsctl co-all STEPS\n"
+	"       shsctl co-core CORE STEPS\n"
 	"       shsctl stats\n";
 
 static int fail(const char *what, int err)
@@ -153,6 +154,33 @@ static int cmd_co_all(const char *arg)
 	return rsp == SHS_RSP_OK ? 0 : 3;
 }
 
+static int cmd_co_core(const char *core_s, const char *steps_s)
+{
+	char *end;
+	uint32_t core, rsp;
+	long steps;
+	int fd, err;
+
+	if (parse_u32(core_s, &core))
+		return fail(core_s, -EINVAL);
+	errno = 0;
+	steps = strtol(steps_s, &end, 10);
+	if (errno || *end || !*steps_s)
+		return fail(steps_s, -EINVAL);
+
+	fd = shs_open(1);
+	if (fd < 0)
+		return fail(SHS_DEV_PATH, fd);
+	err = shs_co_core(fd, core, (int)steps, &rsp);
+	shs_close(fd);
+	if (err)
+		return fail("co-core", err);
+
+	printf("co-core %u %+ld (0x%08x): rsp 0x%02x\n", core, steps,
+	       shs_co_core_encode(core, (int)steps), rsp);
+	return rsp == SHS_RSP_OK ? 0 : 3;
+}
+
 static int cmd_stats(void)
 {
 	struct shs_send_stat st;
@@ -190,6 +218,8 @@ int main(int argc, char **argv)
 		return cmd_msg(argc - 2, argv + 2);
 	if (argc == 3 && !strcmp(argv[1], "co-all"))
 		return cmd_co_all(argv[2]);
+	if (argc == 4 && !strcmp(argv[1], "co-core"))
+		return cmd_co_core(argv[2], argv[3]);
 	if (argc == 2 && !strcmp(argv[1], "stats"))
 		return cmd_stats();
 

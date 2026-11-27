@@ -65,4 +65,9 @@ float shs_core_clk_mhz(const struct shs_snapshot *s, unsigned int core);
 uint32_t shs_co_encode(int steps);
 int shs_co_all(int fd, int steps, uint32_t *rsp);
 
+/* Curve Optimizer, one core (MP1 0x4B): (core / 8) << 28 | (core % 8) << 20 | 16-bit steps. */
+uint32_t shs_co_core_encode(unsigned int core, int steps);
+/* -EINVAL for core >= SHS_TABLE_CORES, -ERANGE for steps outside 16 bits. */
+int shs_co_core(int fd, unsigned int core, int steps, uint32_t *rsp);
+
 #endif /* SHS_H */
