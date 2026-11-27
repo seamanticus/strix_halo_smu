@@ -70,8 +70,17 @@ ALIB drives the MP1 mailbox asynchronously, on EC events, AC changes and profile
 | MP1 0x01 / 0x02 / 0x03 | test (arg + 1) / PMFW version / interface version | phase 2 |
 | RSMU 0x06 / 0x66 / 0x65 | table version+size / table base (lo, hi) / transfer (arg 3) | phase 3 |
 | MP1 0x4C CO all-core | 20-bit two's complement steps (-5 = 0xFFFFB); 0 restores the default | phase 6: -5 gave -6.8 mV at +32 MHz on one core; 0 returned to baseline within 0.5 mV |
+| MP1 0x15 fast limit | mW; lands in table 0x08 | 45000 capped package power (0x0C) at 45.0 W from the first second of load, clock 3532 -> 2702 MHz |
+| MP1 0x16 slow limit | mW; lands in table 0x10 | 30000 sent mid-load cut power 52 -> 30 W within seconds, clock 3161 -> 2175 MHz |
+| MP1 0x14 STAPM limit | mW (BIOS `STPV` encoding) | accepted (0x01) but **no measurable effect**: 20000 left power at 52 W for 300 s, no table word changed. Not verified |
+
+Table word 0x00, labelled "STAPM limit" by RyzenAdj, is not a limit on this machine: it drifts under load and reads the fast limit while that is lower.
 
 Other set and safeguard entries are catalogued from BIOS and tool evidence but have not been exercised on hardware.
+
+### Power limits have another owner
+
+`amd_pmf` sets the fast and slow limits from its own tables (balanced 71/52 W, performance 86/70 W) and re-sends them on every `platform_profile` change, which overwrites any value sent through this module. It did not re-send them on its own during 5 minutes of load. A client that sets limits has to re-apply them after a profile change; cycling the profile is also the clean way back to the defaults.
 
 ## Userspace
 
@@ -91,6 +100,7 @@ Run from this directory with the module loaded with default parameters:
 - `tests/test_phase5.py`: interface and gate. Sends read-class messages only; everything else is refused before reaching the SMU.
 - `tests/test_m2_window.py`: table averaging and the canary window. Reads only.
 - `tests/test_phase6.py [--control]`: CO -5 then 0, under 1-core and all-core load, each load starting at matched Tctl. Run it on AC and at idle; it aborts without sending if idle Tctl is above 45 C or 1-core boost is below 4.5 GHz. `--control` sends nothing. Without it, the kernel stays tainted until reboot.
+- `tests/test_power_limits.py control|fast|slow|stapm`: lowers one power limit under sustained all-core load, judges enforcement on table power, restores via MP1 and a profile cycle. Run in the balanced profile on AC.
 
 ## License
 

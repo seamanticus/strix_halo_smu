@@ -49,8 +49,11 @@ int shs_interface_version(int fd, uint32_t *version);
 int shs_read_table(int fd, struct shs_snapshot *s);
 
 float shs_table_f32(const struct shs_snapshot *s, size_t off);
-float shs_stapm_limit_w(const struct shs_snapshot *s);
+/* Fast and slow limits: MP1 0x15/0x16 land here and are enforced (tests/test_power_limits.py). */
+float shs_fast_limit_w(const struct shs_snapshot *s);
 float shs_slow_limit_w(const struct shs_snapshot *s);
+/* Package power as the fast limit sees it; capped by both limits under load. */
+float shs_fast_power_w(const struct shs_snapshot *s);
 float shs_skin_limit_c(const struct shs_snapshot *s);
 float shs_tctl_c(const struct shs_snapshot *s);
 float shs_core_power_w(const struct shs_snapshot *s, unsigned int core);

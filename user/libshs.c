@@ -9,7 +9,8 @@
 #include "shs.h"
 
 /* Offsets in table 0x0064020C; checked against BIOS values and k10temp, see research/. */
-#define OFF_STAPM_LIMIT		0x000
+#define OFF_FAST_LIMIT		0x008
+#define OFF_FAST_POWER		0x00c
 #define OFF_SLOW_LIMIT		0x010
 #define OFF_SKIN_LIMIT		0x068
 #define OFF_TCTL		0xb38
@@ -109,14 +110,19 @@ static float core_field(const struct shs_snapshot *s, size_t base, unsigned int 
 	return core < SHS_TABLE_CORES ? field(s, base + 4 * core) : NAN;
 }
 
-float shs_stapm_limit_w(const struct shs_snapshot *s)
+float shs_fast_limit_w(const struct shs_snapshot *s)
 {
-	return field(s, OFF_STAPM_LIMIT);
+	return field(s, OFF_FAST_LIMIT);
 }
 
 float shs_slow_limit_w(const struct shs_snapshot *s)
 {
 	return field(s, OFF_SLOW_LIMIT);
+}
+
+float shs_fast_power_w(const struct shs_snapshot *s)
+{
+	return field(s, OFF_FAST_POWER);
 }
 
 float shs_skin_limit_c(const struct shs_snapshot *s)

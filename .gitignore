@@ -9,3 +9,6 @@ modules.order
 .tmp_versions/
 user/libshs.so
 user/shsctl
+/*.txt
+/*.csv
+__pycache__/

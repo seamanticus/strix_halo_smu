@@ -79,8 +79,9 @@ static int cmd_table(int raw)
 		return fwrite(s.data, 1, s.size, stdout) == s.size ? 0 : 1;
 
 	printf("time_ns      %llu\n", (unsigned long long)s.time_ns);
-	printf("stapm_limit  %.2f W\n", shs_stapm_limit_w(&s));
+	printf("fast_limit   %.2f W\n", shs_fast_limit_w(&s));
 	printf("slow_limit   %.2f W\n", shs_slow_limit_w(&s));
+	printf("power        %.2f W\n", shs_fast_power_w(&s));
 	printf("skin_limit   %.2f C\n", shs_skin_limit_c(&s));
 	printf("tctl         %.2f C\n", shs_tctl_c(&s));
 	printf("core  clk_MHz  volt_mV  power_W  temp_C\n");
